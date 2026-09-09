@@ -102,12 +102,27 @@ export async function uploadLogoToStorage(file: File): Promise<{ success: boolea
   if (!client) return { success: false, message: 'Supabase belum terhubung.' };
 
   try {
-    const ext = file.name.split('.').pop() || 'png';
-    const path = `logo-lembaga.${ext}`;
+    const allowedTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml']);
+    const allowedExt = new Set(['png', 'jpg', 'jpeg', 'webp', 'svg']);
+    const ext = (file.name.split('.').pop() || 'png').toLowerCase();
+
+    if (!allowedTypes.has(file.type) || !allowedExt.has(ext)) {
+      return { success: false, message: 'Format logo harus PNG, JPG/JPEG, WEBP, atau SVG.' };
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      return { success: false, message: 'Ukuran logo maksimal 2 MB.' };
+    }
+
+    const safeExt = ext === 'jpeg' ? 'jpg' : ext;
+    const path = `logo-lembaga.${safeExt}`;
 
     const { error: uploadError } = await client.storage
       .from('logos')
-      .upload(path, file, { upsert: true, cacheControl: '3600' });
+      .upload(path, file, {
+        upsert: true,
+        cacheControl: '3600',
+        contentType: file.type
+      });
 
     if (uploadError) {
       return { success: false, message: `Gagal upload ke Storage: ${uploadError.message}. Pastikan bucket "logos" sudah dibuat (lihat supabase/migration.sql).` };
@@ -118,6 +133,11 @@ export async function uploadLogoToStorage(file: File): Promise<{ success: boolea
 
     const saveRes = await saveLogoUrl(publicUrl);
     if (!saveRes.success) return { success: false, message: saveRes.message };
+
+    const verified = await fetchKonfigurasiLembaga();
+    if (!verified || verified.logoUrl !== publicUrl) {
+      return { success: false, message: 'Logo berhasil diunggah, tetapi URL belum terverifikasi tersimpan di konfigurasi lembaga.' };
+    }
 
     return { success: true, url: publicUrl };
   } catch (err: any) {

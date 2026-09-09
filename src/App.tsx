@@ -15,7 +15,7 @@ import {
 
 import {
   fetchKonfigurasiLembaga, getDefaultConfiguration, saveKonfigurasiLembaga,
-  saveSaldoAwal, uploadLogoToStorage
+  saveSaldoAwal, saveLogoUrl, uploadLogoToStorage
 } from './lib/configuration';
 
 import {
@@ -663,6 +663,18 @@ export default function App() {
     showToast('[Demo Lokal] Data tagihan dihapus');
   };
 
+  const handleRemoveLogo = async () => {
+    if (isConnectedToSupabase) {
+      const res = await saveLogoUrl(null);
+      if (!res.success) {
+        showToast(`Gagal menghapus logo: ${res.message}`);
+        return;
+      }
+    }
+    setKonfigurasi(prev => ({ ...prev, logoUrl: null }));
+    showToast(isConnectedToSupabase ? 'Logo lembaga dihapus dari konfigurasi.' : '[Demo Lokal] Logo dihapus');
+  };
+
   // Logo upload -- poin 10 panduan: produksi memakai Supabase Storage +
   // URL disimpan di konfigurasi_lembaga, bukan Base64 permanen di state.
   const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1017,7 +1029,7 @@ export default function App() {
               periodeAktifStatus={activePeriode?.status || null}
               onUpdateLembaga={handleUpdateLembaga}
               onLogoUpload={handleLogoUpload}
-              onRemoveLogo={() => setKonfigurasi(prev => ({ ...prev, logoUrl: null }))}
+              onRemoveLogo={handleRemoveLogo}
               onOpenWizard={() => showToast('Menjalankan Setup Wizard...')}
               onAddMasterKelas={handleAddMasterKelas}
               onRemoveMasterKelas={handleRemoveMasterKelas}

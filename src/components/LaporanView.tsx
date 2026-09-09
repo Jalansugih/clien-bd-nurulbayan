@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Printer, RefreshCw, Upload, Download, FileSpreadsheet } from 'lucide-react';
 import { Pemasukan, Pengeluaran, SiswaTagihan } from '../types';
 
@@ -27,7 +27,7 @@ export const LaporanView: React.FC<LaporanViewProps> = ({
 }) => {
   const [selectedReportType, setSelectedReportType] = useState('Buku Kas Umum (BKU)');
   const [customReportType, setCustomReportType] = useState('');
-  const [reportMonth, setReportMonth] = useState('Agustus 2026');
+  const [reportMonth, setReportMonth] = useState('');
   const [selectedKelas, setSelectedKelas] = useState('Semua Kelas');
   const printDate = new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
 
@@ -36,14 +36,27 @@ export const LaporanView: React.FC<LaporanViewProps> = ({
     : selectedReportType;
 
   // Month mapping to prefix YYYY-MM
+  const MONTHS_ID = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+
   const getMonthPrefix = (label: string) => {
-    if (label.includes('Agustus')) return '2026-08';
-    if (label.includes('Juli')) return '2026-07';
-    if (label.includes('Juni')) return '2026-06';
-    return '2026-08';
+    const match = label.match(/^(Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember)\s+(\d{4})$/i);
+    if (!match) return '';
+    const monthIndex = MONTHS_ID.findIndex(m => m.toLowerCase() === match[1].toLowerCase());
+    return monthIndex >= 0 ? `${match[2]}-${String(monthIndex + 1).padStart(2, '0')}` : '';
   };
 
-  const periodPrefix = getMonthPrefix(reportMonth);
+  const periodPrefix = reportMonth === 'Semua Periode' ? '' : getMonthPrefix(reportMonth);
+
+  // Normalisasi tanggal agar laporan tetap bekerja bila data lama berbentuk
+  // YYYY-MM-DD maupun DD/MM/YYYY.
+  const getTransactionMonth = (tanggal: string | undefined) => {
+    const value = String(tanggal || '').trim();
+    const iso = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (iso) return `${iso[1]}-${iso[2]}`;
+    const local = value.match(/^(\d{2})[\/-](\d{2})[\/-](\d{4})/);
+    if (local) return `${local[3]}-${local[2]}`;
+    return '';
+  };
 
   // Setiap Jenis Laporan Administrasi punya "mode" tampilan & filter data yang berbeda.
   const isBKU = selectedReportType === 'Buku Kas Umum (BKU)';
@@ -53,6 +66,11 @@ export const LaporanView: React.FC<LaporanViewProps> = ({
   const isPertanggungjawaban = selectedReportType === 'Pertanggungjawaban Bulanan';
   const isStudentPaymentReport = selectedReportType === 'Infaq / Pembayaran Siswa';
 
+  // BKU/Saldo menampilkan dua kolom nominal (pemasukan & pengeluaran).
+  // Laporan rekap dan pembayaran siswa hanya memiliki satu kolom nominal.
+  const showTwoColumnNominal =
+    !isStudentPaymentReport && !isRekapPemasukan && !isRekapPengeluaran;
+
   const getTransactionKelas = (tx: Pemasukan) => {
     if (tx.siswaId) return siswaTagihanList.find(s => s.id === tx.siswaId)?.kelas || '';
     if (tx.sumber === 'Infak') return masterKelas.includes(tx.sub) ? tx.sub : '';
@@ -61,7 +79,7 @@ export const LaporanView: React.FC<LaporanViewProps> = ({
 
   // Uang masuk yang benar-benar berasal dari menu Pembayaran Siswa (Infak per-siswa / SPP / dsb),
   // bukan sekadar semua jenis pemasukan (BOS, Donasi, dsb).
-  const isSiswaPayment = (tx: Pemasukan) => !!tx.siswaId || tx.sumber === 'Pembayaran';
+  const isSiswaPayment = (tx: Pemasukan) => !!tx.siswaId || tx.sumber === 'Pembayaran' || tx.sumber === 'Infak';
 
   // All transactions sorted chronologically for BKU
   const allTxSorted = [
@@ -73,10 +91,16 @@ export const LaporanView: React.FC<LaporanViewProps> = ({
   const txDalamPeriode: typeof allTxSorted = [];
 
   allTxSorted.forEach(tx => {
-    const txPrefix = (tx.tanggal || '').slice(0, 7);
+    const txPrefix = getTransactionMonth(tx.tanggal);
+
+    if (reportMonth === 'Semua Periode') {
+      txDalamPeriode.push(tx);
+      return;
+    }
+
     if (txPrefix === periodPrefix) {
       txDalamPeriode.push(tx);
-    } else if (txPrefix < periodPrefix) {
+    } else if (txPrefix && periodPrefix && txPrefix < periodPrefix) {
       saldoAwalPeriode += (tx.type === 'IN' ? tx.nominal : -tx.nominal);
     }
   });
@@ -129,7 +153,26 @@ export const LaporanView: React.FC<LaporanViewProps> = ({
   // Baris "Saldo Kas Akhir Periode" hanya relevan untuk laporan yang mencampur arus masuk & keluar.
   const showSaldoAkhir = isBKU || isPertanggungjawaban || isSaldoPosisi || selectedReportType === 'Lainnya';
   // Kolom tabel: laporan rekap pemasukan/pengeluaran/siswa hanya butuh satu kolom nominal, bukan 2 kolom (masuk & keluar).
-  const showTwoColumnNominal = isBKU || isPertanggungjawaban || selectedReportType === 'Lainnya';
+  const availableReportMonths = Array.from(new Set(
+    allTxSorted
+      .map(tx => getTransactionMonth(tx.tanggal))
+      .filter(Boolean)
+      .map(prefix => {
+        const [year, month] = prefix.split('-');
+        return `${MONTHS_ID[Number(month) - 1]} ${year}`;
+      })
+  )).sort((a, b) => getMonthPrefix(b).localeCompare(getMonthPrefix(a)));
+
+  // "Semua Periode" selalu tersedia, kemudian periode transaksi disusun terbaru -> terlama.
+  const reportMonthOptions = ['Semua Periode', ...availableReportMonths];
+
+  // Setelah data Supabase selesai dimuat, otomatis pilih bulan transaksi terbaru.
+  // Ini menghilangkan ketergantungan pada bulan hard-coded seperti "Agustus 2026".
+  useEffect(() => {
+    if (!reportMonth) {
+      setReportMonth(availableReportMonths[0] || 'Semua Periode');
+    }
+  }, [availableReportMonths.join('|'), reportMonth]);
 
   // Export report to Excel / CSV format
   const handleExportExcel = () => {
@@ -199,6 +242,7 @@ export const LaporanView: React.FC<LaporanViewProps> = ({
           #printable-report {
             position: static !important;
             display: block !important;
+            box-sizing: border-box !important;
             width: 100% !important;
             min-height: 0 !important;
             height: auto !important;
@@ -310,26 +354,23 @@ export const LaporanView: React.FC<LaporanViewProps> = ({
             onChange={(e) => setReportMonth(e.target.value)}
             className="w-full bg-slate-50 border border-slate-200 rounded-[14px] px-3 py-2 text-xs font-medium text-slate-800 outline-none focus:border-blue-500"
           >
-            <option value="Agustus 2026">Agustus 2026</option>
-            <option value="Juli 2026">Juli 2026</option>
-            <option value="Juni 2026">Juni 2026</option>
+            {reportMonthOptions.map(month => (
+              <option key={month} value={month}>{month}</option>
+            ))}
           </select>
         </div>
 
         <div className="flex items-end">
-          <button 
-            onClick={() => {}}
-            className="w-full py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-[14px] text-xs font-semibold border border-blue-200 transition-all flex items-center justify-center gap-1.5"
-          >
+          <div className="w-full py-2 bg-emerald-50 text-emerald-700 rounded-[14px] text-xs font-semibold border border-emerald-200 flex items-center justify-center gap-1.5">
             <RefreshCw className="w-3.5 h-3.5" />
-            <span>Perbarui Preview Laporan</span>
-          </button>
+            <span>Preview otomatis mengikuti filter</span>
+          </div>
         </div>
       </div>
 
       {/* REALTIME A4 PRINT PREVIEW CANVAS */}
       <div className="print-preview-wrapper bg-slate-300/60 p-6 md:p-10 rounded-[14px] border border-slate-300 overflow-x-auto flex justify-center">
-        <div id="printable-report" className="bg-white w-[210mm] min-h-[297mm] p-12 shadow-2xl text-slate-900 text-xs font-sans relative flex flex-col justify-between">
+        <div id="printable-report" className="bg-white w-[210mm] min-h-[297mm] p-12 shadow-2xl text-slate-900 text-xs font-sans relative">
           <div>
             {/* Official Header Kop Sekolah */}
             <div className="print-kop-surat flex items-center gap-4 pb-4 border-b-2 border-slate-900 mb-6">
@@ -343,8 +384,8 @@ export const LaporanView: React.FC<LaporanViewProps> = ({
               </label>
               <div className="flex-1 text-center">
                 <h2 className="text-base font-bold uppercase tracking-wide text-slate-900">{currentLembaga}</h2>
-                <p className="text-[11px] text-slate-600">Kp. Selajambe Rt/Rw : 04/05 Desa Hegarmanah, Kec. Sukaluyu, Cianjur 43284 Telp. 0263-2324180</p>
-                <p className="text-[10px] text-slate-500 font-mono mt-0.5">Email: nbnurul@bayan@gmail.com | NPSN: 20252330</p>
+                <p className="text-[11px] text-slate-600">Kp. Leuwibungur Rt.003 / Rw.003 Desa Sukagalih, Kec. Cikalongkulon, Cianjur 43291 Telp. +62 821-1189-1899</p>
+                <p className="text-[10px] text-slate-500 font-mono mt-0.5">Email: Admin@nurulbayan.com | NPSN: 20277966</p>
               </div>
             </div>
 

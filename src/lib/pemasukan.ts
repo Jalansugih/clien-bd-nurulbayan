@@ -16,7 +16,11 @@ export async function fetchPemasukanFromSupabase(): Promise<Pemasukan[] | null> 
       .select('*')
       .order('tanggal', { ascending: false });
 
-    if (error || !data) return null;
+    if (error) {
+      console.error('[Supabase] Gagal membaca pemasukan:', error);
+      return null;
+    }
+    if (!data) return [];
     return data.map((item: any) => ({
       id: item.id,
       noBukti: item.no_bukti || item.id,
@@ -30,7 +34,8 @@ export async function fetchPemasukanFromSupabase(): Promise<Pemasukan[] | null> 
       createdAt: item.created_at,
       createdBy: item.created_by
     }));
-  } catch {
+  } catch (err) {
+    console.error('[Supabase] Exception saat membaca pemasukan:', err);
     return null;
   }
 }
